@@ -57,7 +57,6 @@ def normalize_showtimes(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         movie_rows = []
         for movie in movies:
             title = movie.get("title") or movie.get("name") or movie.get("film_name") or "(title unknown)"
-            rating = movie.get("rating") or movie.get("content_rating") or movie.get("age_rating") or "NR"
 
             time_blocks = movie.get("showtimes") or movie.get("times") or movie.get("showing") or []
             times: List[str] = []
@@ -72,7 +71,6 @@ def normalize_showtimes(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
 
             movie_rows.append({
                 "title": title,
-                "rating": rating,
                 "times": times[:8],  # keep display manageable
             })
 
@@ -94,7 +92,7 @@ def format_showtime_display(theater_label: str, location_label: str, showtimes: 
     print(f"Theater query: {theater_label}")
     print(f"Location: {location_label}")
     print("=" * 100)
-    print(f"{'MOVIE':<50} {'RATING':<8} {'TIMES'}")
+    print(f"{'MOVIE':<60} TIMES")
     print("-" * 100)
 
     if not showtimes:
@@ -107,15 +105,14 @@ def format_showtime_display(theater_label: str, location_label: str, showtimes: 
         if theater.get("address"):
             print(f"  {theater['address']}")
         for movie in theater.get("movies", []):
-            title = movie["title"][:49]
-            rating = movie.get("rating", "NR")
+            title = movie["title"][:59]
             times = movie.get("times") or []
             if not times:
-                print(f"{title:<50} {rating:<8} (no times)")
+                print(f"{title:<60} (no times)")
                 continue
-            print(f"{title:<50} {rating:<8} {times[0]}")
+            print(f"{title:<60} {times[0]}")
             for extra_time in times[1:]:
-                print(f"{'':<50} {'':<8} {extra_time}")
+                print(f"{'':<60} {extra_time}")
             total += len(times)
         print("-" * 100)
 
@@ -157,7 +154,6 @@ def flatten_movies(entries: List[Dict[str, Any]], now_str: str) -> List[Dict[str
                     "theater_name": theater_name,
                     "address": address,
                     "title": movie.get("title") or "(title unknown)",
-                    "rating": movie.get("rating", "NR"),
                     "times": movie.get("times") or [],
                     "now_str": now_str,
                 })
@@ -180,11 +176,9 @@ def format_single_movie_display(item: Dict[str, Any]):
     print("=" * 100)
 
     title = (item.get("title") or "(title unknown)")[:60]
-    rating = item.get("rating", "NR")
     times = item.get("times") or []
 
     print(f"{title}")
-    print(f"Rating: {rating}")
     if times:
         print("Times:")
         for t in times:

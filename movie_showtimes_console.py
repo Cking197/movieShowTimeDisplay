@@ -5,7 +5,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 try:
     from zoneinfo import ZoneInfo
 except ImportError:  # Python <3.9 fallback
@@ -245,17 +245,17 @@ def run_display(config_path: str, refresh: Optional[int], cache_file: Optional[s
     cycle_delay = refresh or config.get("refresh") or DEFAULT_REFRESH
     cache_path = cache_file or config.get("cache_file") or DEFAULT_CACHE_FILE
 
-    def load_entries_for_today() -> List[Dict[str, Any]]:
+    def load_entries_for_today() -> Tuple[List[Dict[str, Any]], str]:
         today_str = datetime.utcnow().strftime("%Y-%m-%d")
         cached_local = load_cached(cache_path)
         if cached_local and cached_local.get("date") == today_str:
-            return cached_local.get("entries") or []
+            return cached_local.get("entries") or [], cached_local.get("date", today_str)
         fresh = fetch_all(api_key, hl, gl, theaters)
         save_cached(cache_path, today_str, fresh)
-        return fresh
+        return fresh, today_str
 
-    entries = load_entries_for_today()
-    movies = flatten_movies(entries)
+    entries, cache_date = load_entries_for_today()
+    movies = flatten_movies(entries, cache_date)
     if not movies:
         print("No movies found to display. Check your config or cache.")
         return
@@ -267,8 +267,8 @@ def run_display(config_path: str, refresh: Optional[int], cache_file: Optional[s
         cached = load_cached(cache_path)
         if not cached or cached.get("date") != current_date:
             try:
-                entries = load_entries_for_today()
-                movies = flatten_movies(entries)
+                entries, cache_date = load_entries_for_today()
+                movies = flatten_movies(entries, cache_date)
                 idx = 0
             except Exception as e:
                 print(f"\nError refreshing daily data: {e}")

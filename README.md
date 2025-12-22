@@ -1,6 +1,6 @@
 # Movie Showtimes Console Display (SerpAPI)
 
-A console-based display board for movie showtimes using SerpAPI search results. Similar to the LA Metro display, it cycles through a list of theaters you provide and shows current movie showtimes.
+A console-based display board for movie showtimes using SerpAPI search results. Currently console only, it cycles through a list of theaters you provide and shows current movie showtimes.
 
 ## Features
 

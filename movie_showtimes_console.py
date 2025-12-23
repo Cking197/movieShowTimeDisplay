@@ -49,10 +49,19 @@ def fetch_showtimes(api_key: str, theater: str, location: str, hl: str, gl: str)
 def normalize_showtimes(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     theaters = payload.get("showtimes") or []
     normalized: List[Dict[str, Any]] = []
+    
+    # Only take first theater entry (today's showtimes), ignore future days
+    if theaters and len(theaters) > 0:
+        theaters = [theaters[0]]
+    
     for entry in theaters:
         theater_name = entry.get("theater_name") or entry.get("name") or "Unknown Theater"
         address = entry.get("address") or entry.get("address_line") or entry.get("full_address") or ""
         movies = entry.get("movies") or entry.get("showing") or []
+        
+        # Only process first entry (today's movies), skip future days
+        if isinstance(movies, list) and len(movies) > 0 and isinstance(movies[0], list):
+            movies = movies[0]
 
         movie_rows = []
         for movie in movies:
@@ -82,12 +91,13 @@ def normalize_showtimes(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     return normalized
 
 
-def format_showtime_display(theater_label: str, location_label: str, showtimes: List[Dict[str, Any]]):
+def format_showtime_display(theater_label: str, location_label: str, showtimes: List[Dict[str, Any]], tz=None):
     # Clear screen (platform independent)
     print("\033[2J\033[H", end="")
 
     print("\n" + "=" * 100)
-    print(f"MOVIE SHOWTIMES @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    now_time = now_in_tz(tz)
+    print(f"MOVIE SHOWTIMES @ {now_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print("=" * 100)
     print(f"Theater query: {theater_label}")
     print(f"Location: {location_label}")
@@ -138,7 +148,7 @@ def now_in_tz(tz) -> datetime:
     return datetime.now(tz) if tz else datetime.utcnow().replace(tzinfo=timezone.utc)
 
 
-def flatten_movies(entries: List[Dict[str, Any]], now_str: str) -> List[Dict[str, Any]]:
+def flatten_movies(entries: List[Dict[str, Any]], now_str: str, tz=None) -> List[Dict[str, Any]]:
     movies: List[Dict[str, Any]] = []
     for entry in entries:
         theater_label = entry.get("theater_label", "")
@@ -156,6 +166,7 @@ def flatten_movies(entries: List[Dict[str, Any]], now_str: str) -> List[Dict[str
                     "title": movie.get("title") or "(title unknown)",
                     "times": movie.get("times") or [],
                     "now_str": now_str,
+                    "tz": tz,
                 })
     return movies
 
@@ -165,8 +176,9 @@ def format_single_movie_display(item: Dict[str, Any]):
     print("\033[2J\033[H", end="")
 
     print("\n" + "=" * 100)
-    now_str = item.get("now_str") or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(f"MOVIE SHOWTIMES @ {now_str}")
+    tz = item.get("tz")
+    now_time = now_in_tz(tz)
+    print(f"MOVIE SHOWTIMES @ {now_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print("=" * 100)
     print(f"Location: {item.get('location_label', '')}")
     theater_display = item.get("theater_label") or item.get("theater_name") or ""
@@ -238,9 +250,10 @@ def run_display(config_path: str, refresh: Optional[int], cache_file: Optional[s
     theaters = config["theaters"]
     cycle_delay = refresh or config.get("refresh") or DEFAULT_REFRESH
     cache_path = cache_file or config.get("cache_file") or DEFAULT_CACHE_FILE
+    tz = resolve_timezone(config.get("timezone"), config.get("timezone_offset"))
 
     def load_entries_for_today() -> Tuple[List[Dict[str, Any]], str]:
-        today_str = datetime.utcnow().strftime("%Y-%m-%d")
+        today_str = now_in_tz(tz).strftime("%Y-%m-%d")
         cached_local = load_cached(cache_path)
         if cached_local and cached_local.get("date") == today_str:
             return cached_local.get("entries") or [], cached_local.get("date", today_str)
@@ -248,37 +261,73 @@ def run_display(config_path: str, refresh: Optional[int], cache_file: Optional[s
         save_cached(cache_path, today_str, fresh)
         return fresh, today_str
 
+    def group_movies_by_theater(entries: List[Dict[str, Any]], now_str: str) -> List[List[Dict[str, Any]]]:
+        """Group movies by theater, maintaining theater order"""
+        theater_groups = []
+        for entry in entries:
+            theater_label = entry.get("theater_label", "")
+            location_label = entry.get("location_label", "")
+            theater_movies = []
+            for theater in entry.get("showtimes", []):
+                theater_name = theater_label or "Unknown Theater"
+                address = theater.get("address") or ""
+                for movie in theater.get("movies", []):
+                    theater_movies.append({
+                        "theater_label": theater_label,
+                        "location_label": location_label,
+                        "theater_name": theater_name,
+                        "address": address,
+                        "title": movie.get("title") or "(title unknown)",
+                        "times": movie.get("times") or [],
+                        "now_str": now_str,
+                        "tz": tz,
+                    })
+            if theater_movies:
+                theater_groups.append(theater_movies)
+        return theater_groups
+
     entries, cache_date = load_entries_for_today()
-    movies = flatten_movies(entries, cache_date)
-    if not movies:
+    theater_groups = group_movies_by_theater(entries, cache_date)
+    if not theater_groups:
         print("No movies found to display. Check your config or cache.")
         return
 
-    idx = 0
+    theater_idx = 0
+    movie_idx = 0
     while True:
-        # If the UTC date rolls over while running, refresh data and movies
-        current_date = datetime.utcnow().strftime("%Y-%m-%d")
+        # If the date rolls over while running, refresh data and movies
+        current_date = now_in_tz(tz).strftime("%Y-%m-%d")
         cached = load_cached(cache_path)
         if not cached or cached.get("date") != current_date:
             try:
                 entries, cache_date = load_entries_for_today()
-                movies = flatten_movies(entries, cache_date)
-                idx = 0
+                theater_groups = group_movies_by_theater(entries, cache_date)
+                theater_idx = 0
+                movie_idx = 0
             except Exception as e:
                 print(f"\nError refreshing daily data: {e}")
                 time.sleep(5)
                 continue
-            if not movies:
+            if not theater_groups:
                 print("No movies found after refresh. Retrying in 5 seconds...")
                 time.sleep(5)
                 continue
 
-        total = len(movies)
-        item = movies[idx % total]
+        # Get current theater's movies
+        theater_idx_normalized = theater_idx % len(theater_groups)
+        current_theater = theater_groups[theater_idx_normalized]
+        movie_idx_normalized = movie_idx % len(current_theater)
+        item = current_theater[movie_idx_normalized]
+        
         try:
             format_single_movie_display(item)
             time.sleep(cycle_delay)
-            idx += 1
+            movie_idx += 1
+            
+            # Move to next theater when we've shown all movies in current theater
+            if movie_idx >= len(current_theater):
+                movie_idx = 0
+                theater_idx += 1
         except Exception as e:
             print(f"\nError displaying movie: {e}")
             time.sleep(5)
